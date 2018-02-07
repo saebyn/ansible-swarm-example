@@ -1,0 +1,43 @@
+---
+- name: "Service is created"
+  shell: docker service ls --filter name=swarm-visualizer | grep '\sswarm-visualizer\s' | awk '{ print $1 }'
+  register: service_exists
+  changed_when: false
+
+- name: "Service is running"
+  shell: docker service ls --filter name=swarm-visualizer | grep '\sswarm-visualizer\s' | awk '{ printf $3 }' | sed 's/\([0-9]\)\+.*/\1/'
+  register: running_replicas
+  when: service_exists.stdout != "" 
+  failed_when: running_replicas.stdout == "0"
+  changed_when: false
+
+- debug: var=running_replicas
+
+- fail: msg="The service is down"
+  when: running_replicas is defined and (running_replicas.skipped is defined and not running_replicas.skipped) and (running_replicas.stdout is defined and running_replicas.stdout == "0")
+
+- shell: mktemp
+  register: mktemp
+
+- name: Generate env-file
+  template:
+    src: templates/env-file.j2
+    dest: "{{mktemp.stdout}}"
+    mode: 400
+
+- name: Create service
+  shell: >
+    docker service create \
+      --name swarm-visualizer \
+      --env-file {{mktemp.stdout}} \
+      --publish=8080:8080/tcp \
+      --constraint=node.role==manager \
+      --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+      dockersamples/visualizer
+
+  when: service_exists.stdout == "" 
+
+- file: name={{ mktemp.stdout }} state=absent
+
+  # TODO if service exists, update it
+  #  (env file changes, version of image, etc)
